@@ -3,6 +3,7 @@ import sys
 import time
 import threading
 from tkinter import Tk, Label, Button, StringVar
+os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = "hide"
 import pygame
 
 BREAK_INTERVAL = 58 * 60            # 58 minutes in seconds
@@ -11,10 +12,10 @@ BREAK_DURATION = 2 * 60             # 2 min disengagement in seconds
 MUSIC_FILE = "soothing.mp3"
 
 def lock_or_blackout():
-    try:
-        # Try locking the workstation
-        os.system("rundll32.exe user32.dll,LockWorkStation")
-    except Exception:
+#    try:
+#        # Try locking the workstation
+#        os.system("rundll32.exe user32.dll,LockWorkStation")
+#    except Exception:
         # Blackout fallback (fullscreen black window)
         win = Tk()
         win.attributes('-fullscreen', True)
