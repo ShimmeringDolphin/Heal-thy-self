@@ -1,12 +1,15 @@
 import os
 import time
 import threading
-from tkinter import Tk, Label, Button, StringVar, Frame
-os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = "hide"
+from tkinter import Tk, Toplevel, Label, Button, StringVar, Frame
 import pygame
+from screeninfo import get_monitors
 
 # Suppress pygame welcome message
 os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = "hide"
+
+# Initialize pygame GLOBALLY at module level
+pygame.init()
 
 # Constants
 BREAK_INTERVAL_SHORT = 58 * 60  # 58 minutes
@@ -83,99 +86,170 @@ class DisengagePopup:
 
 
 class BreakEnforcer:
-    """Fullscreen break enforcer with music"""
+    """Fullscreen break enforcer with music - supports multiple monitors"""
     
     def __init__(self, duration_seconds):
         self.duration = duration_seconds
         self.music_file = MUSIC_FILE
+        self.windows = []  # Store all monitor windows
         
-    def play_music_background(self):
-        """Play music in background thread"""
+    def play_music_blocking(self):
+        """
+        Play music and WAIT for it to finish
+        """
         try:
-            if os.path.exists(self.music_file):
-                pygame.mixer.init()
-                pygame.mixer.music.load(self.music_file)
-                pygame.mixer.music.play()
+            # Check if file exists
+            if not os.path.exists(self.music_file):
+                print(f"ERROR: Music file '{self.music_file}' not found!")
+                print(f"Current directory: {os.getcwd()}")
+                return
+            
+            # Initialize mixer
+            pygame.mixer.init()
+            pygame.mixer.music.load(self.music_file)
+            pygame.mixer.music.play(-1)  # -1 = loop indefinitely
+            
+            print(f"Music started: {self.music_file}")
+            
+            # Wait for duration while checking if music is still playing
+            elapsed = 0
+            while elapsed < self.duration:
+                if pygame.mixer.music.get_busy():
+                    time.sleep(0.1)
+                    elapsed += 0.1
+                else:
+                    # Music stopped, restart it
+                    pygame.mixer.music.play(-1)
+                
         except Exception as e:
             print(f"Music playback error: {e}")
+        finally:
+            try:
+                pygame.mixer.music.stop()
+            except:
+                pass
             
-    def fullscreen_blackout(self):
-        """Create fullscreen blackout window with input blocking"""
-        root = Tk()
-        root.title("Break Time")
+    def create_blackout_window(self, monitor, is_primary=False):
+        """
+        Create a fullscreen blackout window for a specific monitor
+        
+        Args:
+            monitor: Monitor object from screeninfo
+            is_primary: Whether this is the primary monitor (for main Tk window)
+        """
+        if is_primary:
+            # Use Tk() for the first window
+            win = Tk()
+        else:
+            # Use Toplevel() for additional monitors
+            win = Toplevel()
+            
+        win.title("Break Time")
+        
+        # Position window on specific monitor using geometry
+        # Format: WIDTHxHEIGHT+X_OFFSET+Y_OFFSET
+        geometry_string = f"{monitor.width}x{monitor.height}+{monitor.x}+{monitor.y}"
+        win.geometry(geometry_string)
+        
+        print(f"Creating window on monitor: {monitor.name} at {geometry_string}")
         
         # ============================================================
-        # TESTING BLOCK 1: Window Appearance Settings
-        # Comment out these lines to test impact on fullscreen/topmost
+        # Window Appearance Settings
         # ============================================================
-        root.attributes('-fullscreen', True)  # Makes window fullscreen
-        root.attributes('-topmost', True)     # Keeps window above all others
-        root.configure(bg='black')            # Black background
+        win.configure(bg='black')
         
         # ============================================================
-        # TESTING BLOCK 2: Window Frame Override
-        # Comment out this line to see window decorations (title bar, etc.)
-        # This removes the window frame and makes it undecorated
+        # Window Frame Override
         # ============================================================
-        root.overrideredirect(True)
+        win.overrideredirect(True)
         
         # ============================================================
-        # TESTING BLOCK 3: Input Focus Control
-        # Comment out these lines to allow normal window switching
+        # Keep window on top
         # ============================================================
-        root.focus_force()  # Forces keyboard focus to this window
-        root.grab_set()     # Captures all keyboard/mouse input to this window only
+        win.attributes('-topmost', True)
         
         # ============================================================
-        # TESTING BLOCK 4: Window Close Prevention
-        # Comment out this line to allow Alt+F4 to close the window
+        # Input Focus Control
         # ============================================================
-        root.protocol("WM_DELETE_WINDOW", lambda: None)
+        win.focus_force()
+        if is_primary:
+            win.grab_set()  # Only grab input on primary window
         
         # ============================================================
-        # TESTING BLOCK 5: Keyboard Shortcut Blocking
-        # Comment out these lines to test if shortcuts work
-        # These bindings intercept keystrokes and do nothing with them
+        # Window Close Prevention
         # ============================================================
-        root.bind('<Escape>', lambda e: None)      # Blocks Escape key
-        root.bind('<Alt-F4>', lambda e: None)      # Blocks Alt+F4
-        root.bind('<Alt-Tab>', lambda e: None)     # Blocks Alt+Tab
-        root.bind('<Control-Alt-Delete>', lambda e: None)  # Blocks Ctrl+Alt+Del (may not work)
-        root.bind('<Super_L>', lambda e: None)     # Blocks left Windows key
-        root.bind('<Super_R>', lambda e: None)     # Blocks right Windows key
+        win.protocol("WM_DELETE_WINDOW", lambda: None)
         
-        # Message in center
-        label = Label(
-            root, 
-            text=f"Break Time - {self.duration//60} minutes\n\nPlease rest your eyes and stretch\n\nMusic is playing...",
-            font=("Helvetica", 24),
-            fg="white",
-            bg="black"
-        )
-        label.place(relx=0.5, rely=0.5, anchor="center")
+        # ============================================================
+        # Keyboard Shortcut Blocking (only on primary window)
+        # ============================================================
+        if is_primary:
+            win.bind('<Escape>', lambda e: None)
+            win.bind('<Alt-F4>', lambda e: None)
+            win.bind('<Alt-Tab>', lambda e: None)
+            win.bind('<Control-Alt-Delete>', lambda e: None)
+            win.bind('<Super_L>', lambda e: None)
+            win.bind('<Super_R>', lambda e: None)
         
-        # Auto-close after duration
-        root.after(int(self.duration * 1000), root.destroy)
+        # Message in center (only on primary monitor)
+        if is_primary or monitor.is_primary:
+            label = Label(
+                win, 
+                text=f"Break Time - {self.duration//60} minutes\n\nPlease rest your eyes and stretch\n\nMusic is playing...",
+                font=("Helvetica", 24),
+                fg="white",
+                bg="black"
+            )
+            label.place(relx=0.5, rely=0.5, anchor="center")
         
-        root.mainloop()
+        return win
+    
+    def fullscreen_blackout_multimonitor(self):
+        """Create fullscreen blackout windows on ALL monitors"""
+        
+        # Get all monitors
+        monitors = get_monitors()
+        #print(f"Detected {len(monitors)} monitor(s)")
+        
+        # Create windows for each monitor
+        for idx, monitor in enumerate(monitors):
+            is_primary = (idx == 0)  # First window is primary
+            win = self.create_blackout_window(monitor, is_primary)
+            self.windows.append(win)
+        
+        # Schedule all windows to close after duration
+        # Use the first (primary) window for scheduling
+        if self.windows:
+            self.windows[0].after(int(self.duration * 1000), self.close_all_windows)
+            
+            # Start mainloop on primary window
+            self.windows[0].mainloop()
+    
+    def close_all_windows(self):
+        """Close all blackout windows"""
+        for win in self.windows:
+            try:
+                win.destroy()
+            except:
+                pass
+        self.windows.clear()
         
     def enforce(self):
-        """Main enforcement method"""
-        # Start music in background thread
-        music_thread = threading.Thread(target=self.play_music_background, daemon=True)
+        """
+        Main enforcement method - blackout all monitors with music
+        """
+        # Start music in a separate thread
+        music_thread = threading.Thread(target=self.play_music_blocking, daemon=False)
         music_thread.start()
         
         # Small delay to ensure music starts
-        time.sleep(0.5)
+        time.sleep(0.2)
         
-        # Show fullscreen blackout
-        self.fullscreen_blackout()
+        # Show fullscreen blackout on ALL monitors
+        self.fullscreen_blackout_multimonitor()
         
-        # Stop music after blackout ends
-        try:
-            pygame.mixer.music.stop()
-        except:
-            pass
+        # Wait for music thread to finish
+        music_thread.join(timeout=5)
 
 
 def main_loop():
@@ -184,6 +258,17 @@ def main_loop():
     last_short_break = start_time
     last_long_break = start_time
     
+    print("Disengagement script started...")
+    print(f"Music file: {MUSIC_FILE}")
+    print(f"Short break interval: {BREAK_INTERVAL_SHORT//60} minutes")
+    print(f"Long break interval: {BREAK_INTERVAL_LONG//3600} hours")
+    
+    # Detect monitors at startup
+    monitors = get_monitors()
+    print(f"\nDetected {len(monitors)} monitor(s):")
+    for monitor in monitors:
+        print(f"  - {monitor.name}: {monitor.width}x{monitor.height} at ({monitor.x}, {monitor.y})")
+    
     while True:
         current_time = time.time()
         elapsed_since_short = current_time - last_short_break
@@ -191,18 +276,17 @@ def main_loop():
         
         # Check for 3-hour long break first (higher priority)
         if elapsed_since_long >= BREAK_INTERVAL_LONG - 60:
-            # 3-hour break popup at 2h59m
+            print("\n3-hour break triggered!")
             popup = DisengagePopup(countdown_seconds=60)
             snooze, clicked = popup.show()
             
             if snooze == 0 or not clicked:
-                # No snooze, enforce break
                 enforcer = BreakEnforcer(BREAK_DURATION_LONG)
                 enforcer.enforce()
                 last_long_break = time.time()
-                last_short_break = time.time()  # Reset short break too
+                last_short_break = time.time()
             else:
-                # Snooze requested
+                print(f"User snoozed for {snooze//60} minutes")
                 time.sleep(snooze)
                 enforcer = BreakEnforcer(BREAK_DURATION_LONG)
                 enforcer.enforce()
@@ -211,7 +295,7 @@ def main_loop():
                 
         # Check for regular 58-minute break
         elif elapsed_since_short >= BREAK_INTERVAL_SHORT - 60:
-            # Regular break popup at 57 minutes
+            print("\n58-minute break triggered!")
             popup = DisengagePopup(countdown_seconds=60)
             snooze, clicked = popup.show()
             
@@ -220,6 +304,7 @@ def main_loop():
                 enforcer.enforce()
                 last_short_break = time.time()
             else:
+                print(f"User snoozed for {snooze//60} minutes")
                 time.sleep(snooze)
                 enforcer = BreakEnforcer(BREAK_DURATION_SHORT)
                 enforcer.enforce()
